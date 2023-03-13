@@ -3,33 +3,51 @@ import plyvel
 import json
 import socket
 import hashlib
+import random
 
 print("hello", os.environ['TYPE'], os.getpid())
 
 # *** Master Server ***
 
 if os.environ['TYPE'] == 'master':
+    # check on volume servers
+    volumes = os.environ['VOLUMES'].split(',')
+
+    for v in volumes:
+        print(v)
+
     db = plyvel.DB(os.environ['DB'], create_if_missing=True)
 
 def master(env, start_response):
-    key = env['REQUEST_URI'].encode('utf-8')
-    metakey = db.get(key)
+    key = env['REQUEST_URI']
+    metakey = db.get(key.encode('utf-8'))
+
+    # debugging
+    print(metakey)
+    print("|")
 
     if metakey is None:
-        if env['REQUEST_METHOD'] in ['PUT']:
-            # TODO: handle putting key
-            pass
+        if env['REQUEST_METHOD'] == 'PUT':
+            # handle putting key
+            # TODO: make volume selection intelligent
+            volume = random.choice(volumes)
 
-        # this key doesn't exist and we aren't trying to create it
-        start_response('404 Not Found', [('Content-Type', 'text/html')])
-        return [b'Key Not Found']
+            # save volume to database
+            meta = {"volume": volume}
+            # remember which volue the key is on
+            db.put(key.encode('utf-8'), json.dumps(meta).encode('utf-8')) 
+        else:
+            # this key doesn't exist and we aren't trying to create it
+            start_response('404 Not Found', [('Content-Type', 'text/plain')])
+            return [b'Key Not Found']
+    else:
+        # key found and we are trying to put it
+        meta = json.loads(metakey.decode('utf-8')) # know which volume
 
-    # key found
-    meta = json.loads(metakey)
-
-    # send the redirect for either GET or DELETE
-    headers = [('location', 'http://%s%s' % (meta['volume'], key)), ('expires', '0')]
-    start_response('302 Found', headers)
+    print(meta)
+    volume = meta['volume']
+    headers = [('Location', 'http://%s%s' % (volume, key))]
+    start_response('307 Temporary Redirect', headers)
     return [b'']
 
 
@@ -67,9 +85,6 @@ class FileCache(object):
 if os.environ['TYPE'] == 'volume':
     host = socket.gethostname()
 
-    # register with master
-    master = os.environ['MASTER']
-
     # create the filecache
     fc = FileCache(os.environ['VOLUME'])
 
@@ -84,11 +99,19 @@ def volume(env, start_response):
             # key not in the FileCache
             start_response('404 Not Found', [('Content-Type', 'text/plain')])
             return [b'Key Not Found']
+
+        start_response('200 OK', [('Content-Type', 'text/plain')])
         return [fc.get(hkey)]
 
     if env['REQUEST_METHOD'] == 'PUT':
         flen = int(env.get('CONTENT_LENGTH', 0))
-        fc.put(hkey, env['wsgi.input'].read(flen))
+        if flen > 0:
+            fc.put(hkey, env['wsgi.input'].read(flen))
+            start_response('200 OK', [('Content-Type', 'text/plain')])
+            return [b'']
+        else:
+            start_response('411 Length Required', [('Content-Type', 'text/plain')])
+            return [b'']
 
     if env['REQUEST_METHOD'] == 'DELETE':
         fc.delete(hkey)
