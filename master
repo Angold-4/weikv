@@ -1,2 +1,4 @@
 #!/bin/bash
-uwsgi --socket 0.0.0.0:3000 --protocol http -w server:app --processes 4
+export DB=${1:-/tmp/cachedb/}
+export TYPE=master
+uwsgi --http :${PORT:-3000} --wsgi-file src/server.py --callable master --master --processes 4
