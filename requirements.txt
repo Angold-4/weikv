@@ -1,3 +1,4 @@
 plyvel==1.5.0
 Flask==2.2.3
 uWSGI==2.0.21
+xattr==0.10.1
